@@ -37,33 +37,33 @@ type GraphBuilder' i = GraphBuilder i i
 runGraphBuilder :: forall o a. GraphBuilder () o a -> Unit
 runGraphBuilder _ = unit
 
-instance Functor (GraphBuilder i i) where
+instance functorGraphBuilder :: Functor (GraphBuilder i i) where
   map _ _ = UnsafeGraphBuilder
 
-instance Apply (GraphBuilder i i) where
+instance applyGraphBuilder :: Apply (GraphBuilder i i) where
   apply _ _ = UnsafeGraphBuilder
 
-instance Applicative (GraphBuilder i i) where
+instance applicativeGraphBuilder :: Applicative (GraphBuilder i i) where
   pure _ = UnsafeGraphBuilder
 
-instance Bind (GraphBuilder i i) where
+instance bindGraphBuilder :: Bind (GraphBuilder i i) where
   bind _ _ = UnsafeGraphBuilder
 
-instance Monad (GraphBuilder i i)
+instance monadGraphBuilder :: Monad (GraphBuilder i i)
 
-instance IxFunctor GraphBuilder where
+instance ixFunctorGraphBuilder :: IxFunctor GraphBuilder where
   imap _ _ = UnsafeGraphBuilder
 
-instance IxApply GraphBuilder where
+instance ixApplyGraphBuilder :: IxApply GraphBuilder where
   iapply _ _ = UnsafeGraphBuilder
 
-instance IxApplicative GraphBuilder where
+instance ixApplicativeGraphBuilder :: IxApplicative GraphBuilder where
   ipure _ = UnsafeGraphBuilder
 
-instance IxBind GraphBuilder where
+instance ixBindGraphBuilder :: IxBind GraphBuilder where
   ibind _ _ = UnsafeGraphBuilder
 
-instance IxMonad GraphBuilder
+instance ixMonadGraphBuilder :: IxMonad GraphBuilder
 
 --
 data GraphElement :: Row Type -> Row Type -> Type
