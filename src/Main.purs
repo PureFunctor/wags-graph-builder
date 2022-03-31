@@ -21,7 +21,7 @@ type IrrefutablyMakesSound r =
   | r
   )
 
-type ValidCapabilities r = IrrefutablyHasOutput + IrrefutablyMakesSound + r
+type FinalCapabilities r = IrrefutablyHasOutput + IrrefutablyMakesSound + r
 
 type CannotAcceptInput r =
   ( cannotAcceptInput :: Unit
