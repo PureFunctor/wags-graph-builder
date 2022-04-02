@@ -7,35 +7,29 @@ import Control.Monad.Indexed.Qualified as Ix
 import Data.Functor.Indexed (class IxFunctor)
 import Effect (Effect)
 import Effect.Console (log)
+import Prim.Boolean (False, True)
 import Prim.Row as Row
+import Prim.Symbol as Symbol
+import Type.Proxy (Proxy(..))
 import Type.Row (type (+))
 
 --
-type IrrefutablyHasOutput r =
-  ( irrefutablyHasOutput :: Unit
-  | r
-  )
+data Tuple :: forall k l. k -> l -> Type
+data Tuple a b
 
-type IrrefutablyMakesSound r =
-  ( irrefutablyMakesSound :: Unit
-  | r
-  )
-
-type FinalCapabilities r = IrrefutablyHasOutput + IrrefutablyMakesSound + r
-
-type CannotAcceptInput r =
-  ( cannotAcceptInput :: Unit
-  | r
-  )
+infixr 6 type Tuple as /\
 
 --
-data GraphBuilder :: Row Type -> Row Type -> Type -> Type
+data GraphBuilder :: Type -> Type -> Type -> Type
 data GraphBuilder i o a = UnsafeGraphBuilder
 
 type GraphBuilder' i = GraphBuilder i i
 
-runGraphBuilder :: forall o a. GraphBuilder () o a -> Unit
-runGraphBuilder _ = unit
+evalGraphBuilder :: forall s r. GraphBuilder InitialGraphBuilderIndex (_ /\ s /\ r) _ -> Proxy (s /\ r)
+evalGraphBuilder _ = Proxy
+
+type InitialGraphBuilderIndex :: Type
+type InitialGraphBuilderIndex = "_" /\ (() :: Row Type) /\ (() :: Row Type)
 
 instance functorGraphBuilder :: Functor (GraphBuilder i i) where
   map _ _ = UnsafeGraphBuilder
@@ -66,42 +60,117 @@ instance ixBindGraphBuilder :: IxBind GraphBuilder where
 instance ixMonadGraphBuilder :: IxMonad GraphBuilder
 
 --
-data GraphElement :: Row Type -> Row Type -> Type
-data GraphElement capabilities restrictions = UnsafeGraphElement
+data GraphUnit :: Row Type -> Row Type -> Type
+data GraphUnit capabilities restrictions = UnsafeGraphUnit
 
 --
-createSpeaker :: forall capabilities. GraphBuilder' capabilities (GraphElement (IrrefutablyHasOutput + ()) ())
+class Allocate :: Type -> Type -> Constraint
+class Allocate i o | i -> o
+
+instance allocate ::
+  ( Symbol.Cons "_" currentId futureId
+  , Row.Cons currentId Unit currentSet futureSet
+  ) =>
+  Allocate (currentId /\ currentSet /\ currentRef) (futureId /\ futureSet /\ currentRef)
+
+class Deallocate :: Symbol -> Type -> Type -> Constraint
+class Deallocate l i o | i -> o
+
+instance deallocate ::
+  ( Row.Cons idToDeallocate Unit futureSet currentSet
+  ) =>
+  Deallocate idToDeallocate
+    (currentId /\ currentSet /\ currentRef)
+    (currentId /\ futureSet /\ currentRef)
+
+--
+createSpeaker
+  :: forall i0 i1 i2 o
+   . Allocate (i0 /\ i1 /\ i2) o
+  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ True /\ False))
 createSpeaker = UnsafeGraphBuilder
 
-createGain :: forall capabilities. GraphBuilder' capabilities (GraphElement () ())
+createGain
+  :: forall i0 i1 i2 o
+   . Allocate (i0 /\ i1 /\ i2) o
+  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ False /\ False))
 createGain = UnsafeGraphBuilder
 
-createSource :: forall capabilities. GraphBuilder' capabilities (GraphElement (IrrefutablyMakesSound + ()) (CannotAcceptInput + ()))
-createSource = UnsafeGraphBuilder
+createSinOsc
+  :: forall i0 i1 i2 o
+   . Allocate (i0 /\ i1 /\ i2) o
+  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ False /\ False))
+createSinOsc = UnsafeGraphBuilder
 
-connect
-  :: forall fromC fromR intoC intoR fromIntoC prevC nextC
-   . Row.Lacks "cannotAcceptInput" intoR
-  => Row.Union fromC intoC fromIntoC
-  => Row.Union fromIntoC prevC nextC
-  => { from :: GraphElement fromC fromR
-     , into :: GraphElement intoC intoR
-     }
-  -> GraphBuilder prevC nextC Unit
-connect _ = UnsafeGraphBuilder
+intoRef
+  :: forall i0 i1 i2 j1 j2 l t
+   . Row.Cons l Unit j1 i1
+  => Row.Cons l Unit i2 j2
+  => Proxy (l /\ t /\ False)
+  -> GraphBuilder (i0 /\ i1 /\ i2) (i0 /\ j1 /\ j2) (Proxy (l /\ t /\ True))
+intoRef _ = UnsafeGraphBuilder
 
---
-yes :: Unit
-yes = runGraphBuilder Ix.do
+dropRef
+  :: forall i0 i1 i2 o l t
+   . Row.Lacks l i2
+  => Proxy (l /\ t /\ True)
+  -> GraphBuilder (i0 /\ i1 /\ i2) (i0 /\ i1 /\ i2) Unit
+dropRef _ = UnsafeGraphBuilder
+
+class Connect f t i o a | f t i -> o a where
+  connect :: Proxy f -> Proxy t -> GraphBuilder i o (Proxy a)
+
+instance connectIntoSelf ::
+  ( Row.Cons i Unit currentSet' currentSet
+  , Row.Cons currentId Unit currentSet' futureSet
+  , Symbol.Cons "_" currentId futureId
+  ) =>
+  Connect (i /\ t /\ False)
+    (i /\ t /\ False)
+    (currentId /\ currentSet /\ currentRef)
+    (futureId /\ futureSet /\ currentRef)
+    (currentId /\ t /\ False) where
+  connect _ _ = UnsafeGraphBuilder
+
+else instance connectNoTerminals ::
+  ( Row.Cons i0 Unit currentSet' currentSet
+  , Row.Cons i1 Unit currentSet'' currentSet'
+  , Row.Cons currentId Unit currentSet'' futureSet
+  , Symbol.Cons "_" currentId futureId
+  ) =>
+  Connect (i0 /\ False /\ False)
+    (i1 /\ False /\ False)
+    (currentId /\ currentSet /\ currentRef)
+    (futureId /\ futureSet /\ currentRef)
+    (currentId /\ False /\ False) where
+  connect _ _ = UnsafeGraphBuilder
+
+else instance connectIntoTerminal ::
+  ( Row.Cons i0 Unit currentSet' currentSet
+  , Row.Cons i1 Unit currentSet'' currentSet'
+  , Symbol.Cons "_" currentId futureId
+  ) =>
+  Connect (i0 /\ False /\ False)
+    (i1 /\ True /\ False)
+    (currentId /\ currentSet /\ currentRef)
+    (futureId /\ currentSet'' /\ currentRef)
+    (currentId /\ True /\ False) where
+  connect _ _ = UnsafeGraphBuilder
+
+basic = evalGraphBuilder Ix.do
   speaker <- createSpeaker
   gain <- createGain
-  source <- createSource
-  connect { from: source, into: gain }
-  connect { from: gain, into: speaker }
+  sinOsc <- createSinOsc
+  _0 <- connect sinOsc gain
+  _1 <- connect _0 speaker
+  Ix.pure unit
 
--- no = runGraphBuilder $ Ix.do
---   source <- createSource
---   connect { from: source, into: source }
+selfConnect = evalGraphBuilder Ix.do
+  speaker <- createSpeaker
+  gain <- createGain
+  _0 <- connect gain gain
+  _1 <- connect _0 speaker
+  Ix.pure unit
 
 main :: Effect Unit
 main = log "🍝"
