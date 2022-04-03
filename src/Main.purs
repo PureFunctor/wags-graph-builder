@@ -5,13 +5,10 @@ import Prelude
 import Control.Monad.Indexed (class IxApplicative, class IxApply, class IxBind, class IxMonad)
 import Control.Monad.Indexed.Qualified as Ix
 import Data.Functor.Indexed (class IxFunctor)
-import Effect (Effect)
-import Effect.Console (log)
 import Prim.Boolean (False, True)
 import Prim.Row as Row
 import Prim.Symbol as Symbol
 import Type.Proxy (Proxy(..))
-import Type.Row (type (+))
 
 --
 data Tuple :: forall k l. k -> l -> Type
@@ -23,13 +20,11 @@ infixr 6 type Tuple as /\
 data GraphBuilder :: Type -> Type -> Type -> Type
 data GraphBuilder i o a = UnsafeGraphBuilder
 
-type GraphBuilder' i = GraphBuilder i i
-
-evalGraphBuilder :: forall s r. GraphBuilder InitialGraphBuilderIndex (_ /\ s /\ r) _ -> Proxy (s /\ r)
-evalGraphBuilder _ = Proxy
-
 type InitialGraphBuilderIndex :: Type
-type InitialGraphBuilderIndex = "_" /\ (() :: Row Type) /\ (() :: Row Type)
+type InitialGraphBuilderIndex = "_" /\ (() :: Row Type) /\ (() :: Row Boolean) /\ False
+
+evalGraphBuilder :: forall o a. GraphBuilder InitialGraphBuilderIndex o a -> Proxy o
+evalGraphBuilder _ = Proxy
 
 instance functorGraphBuilder :: Functor (GraphBuilder i i) where
   map _ _ = UnsafeGraphBuilder
@@ -60,117 +55,91 @@ instance ixBindGraphBuilder :: IxBind GraphBuilder where
 instance ixMonadGraphBuilder :: IxMonad GraphBuilder
 
 --
-data GraphUnit :: Row Type -> Row Type -> Type
-data GraphUnit capabilities restrictions = UnsafeGraphUnit
+data Speaker = Speaker
+
+data Gain = Gain
+
+data SinOsc = SinOsc
+
+data GraphUnit :: Symbol -> Type -> Type
+data GraphUnit id node = GraphUnit
+
+class IsNode :: Type -> Constraint
+class IsNode node
+
+instance isNodeSpeaker :: IsNode Speaker
+instance isNodeGain :: IsNode Gain
+instance isNodeSinOsc :: IsNode SinOsc
+
+class HasInput :: Type -> Constraint
+class HasInput node
+
+instance hasInputSpeaker :: HasInput Speaker
+instance hasInputGain :: HasInput Gain
+
+class HasOutput :: Type -> Constraint
+class HasOutput node
+
+instance hasOutputSpeaker :: HasOutput Speaker
+instance hasOutputGain :: HasOutput Gain
+instance hasOutputSinOsc :: HasOutput SinOsc
+
+class HasSound :: Type -> Boolean -> Constraint
+class HasSound node yesOrNo | node -> yesOrNo
+
+instance hasSoundSinOsc :: HasSound SinOsc True
+else instance hasSoundDefault :: HasSound node False
 
 --
-class Allocate :: Type -> Type -> Constraint
-class Allocate i o | i -> o
+class Create :: Type -> Symbol -> Type -> Type -> Constraint
+class Create i id node o | i node -> id o where
+  create :: node -> GraphBuilder i o (GraphUnit id node)
 
-instance allocate ::
-  ( Symbol.Cons "_" currentId futureId
-  , Row.Cons currentId Unit currentSet futureSet
+instance createSpeaker ::
+  ( Row.Cons n True t t'
+  , Symbol.Cons "_" n n'
   ) =>
-  Allocate (currentId /\ currentSet /\ currentRef) (futureId /\ futureSet /\ currentRef)
+  Create (n /\ c /\ t /\ s) n Speaker (n' /\ c /\ t' /\ s) where
+  create _ = UnsafeGraphBuilder
 
-class Deallocate :: Symbol -> Type -> Type -> Constraint
-class Deallocate l i o | i -> o
-
-instance deallocate ::
-  ( Row.Cons idToDeallocate Unit futureSet currentSet
+else instance createNode ::
+  ( Row.Cons n False t t'
+  , Symbol.Cons "_" n n'
   ) =>
-  Deallocate idToDeallocate
-    (currentId /\ currentSet /\ currentRef)
-    (currentId /\ futureSet /\ currentRef)
+  Create (n /\ c /\ t /\ s) n node (n' /\ c /\ t' /\ s) where
+  create _ = UnsafeGraphBuilder
 
---
-createSpeaker
-  :: forall i0 i1 i2 o
-   . Allocate (i0 /\ i1 /\ i2) o
-  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ True /\ False))
-createSpeaker = UnsafeGraphBuilder
+class IntoIsTerminal :: Boolean -> Constraint
+class IntoIsTerminal isTerminal
 
-createGain
-  :: forall i0 i1 i2 o
-   . Allocate (i0 /\ i1 /\ i2) o
-  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ False /\ False))
-createGain = UnsafeGraphBuilder
+instance intoIsTerminalTrue :: IntoIsTerminal True
 
-createSinOsc
-  :: forall i0 i1 i2 o
-   . Allocate (i0 /\ i1 /\ i2) o
-  => GraphBuilder (i0 /\ i1 /\ i2) o (Proxy (i0 /\ False /\ False))
-createSinOsc = UnsafeGraphBuilder
+class MakesSound :: Type -> Boolean -> Boolean -> Constraint
+class MakesSound node n f | node n -> f
 
-intoRef
-  :: forall i0 i1 i2 j1 j2 l t
-   . Row.Cons l Unit j1 i1
-  => Row.Cons l Unit i2 j2
-  => Proxy (l /\ t /\ False)
-  -> GraphBuilder (i0 /\ i1 /\ i2) (i0 /\ j1 /\ j2) (Proxy (l /\ t /\ True))
-intoRef _ = UnsafeGraphBuilder
+instance makesSoundAlready :: MakesSound node True True
+else instance makesSoundFuture :: (HasSound node yesOrNo) => MakesSound node tOrF yesOrNo
 
-dropRef
-  :: forall i0 i1 i2 o l t
-   . Row.Lacks l i2
-  => Proxy (l /\ t /\ True)
-  -> GraphBuilder (i0 /\ i1 /\ i2) (i0 /\ i1 /\ i2) Unit
-dropRef _ = UnsafeGraphBuilder
+class Connect :: Type -> Symbol -> Type -> Symbol -> Type -> Type -> Constraint
+class Connect i fId fNode iId iNode o | i fId fNode iId iNode -> o where
+  connect
+    :: { from :: GraphUnit fId fNode
+       , into :: GraphUnit iId iNode
+       }
+    -> GraphBuilder i o Unit
 
-class Connect f t i o a | f t i -> o a where
-  connect :: Proxy f -> Proxy t -> GraphBuilder i o (Proxy a)
-
-instance connectIntoSelf ::
-  ( Row.Cons i Unit currentSet' currentSet
-  , Row.Cons currentId Unit currentSet' futureSet
-  , Symbol.Cons "_" currentId futureId
+instance connectDefault ::
+  ( HasOutput fNode
+  , HasInput iNode
+  , Row.Cons iId iIsTerminal t_ t
+  , IntoIsTerminal iIsTerminal
+  , Row.Cons fId tOrF t' t
+  , Row.Cons fId True t' t''
+  , Symbol.Cons "." iId iId'
+  , Symbol.Append fId iId' cId
+  , Row.Lacks cId c
+  , Row.Cons cId Unit c c'
+  , MakesSound fNode s s'
   ) =>
-  Connect (i /\ t /\ False)
-    (i /\ t /\ False)
-    (currentId /\ currentSet /\ currentRef)
-    (futureId /\ futureSet /\ currentRef)
-    (currentId /\ t /\ False) where
-  connect _ _ = UnsafeGraphBuilder
-
-else instance connectNoTerminals ::
-  ( Row.Cons i0 Unit currentSet' currentSet
-  , Row.Cons i1 Unit currentSet'' currentSet'
-  , Row.Cons currentId Unit currentSet'' futureSet
-  , Symbol.Cons "_" currentId futureId
-  ) =>
-  Connect (i0 /\ False /\ False)
-    (i1 /\ False /\ False)
-    (currentId /\ currentSet /\ currentRef)
-    (futureId /\ futureSet /\ currentRef)
-    (currentId /\ False /\ False) where
-  connect _ _ = UnsafeGraphBuilder
-
-else instance connectIntoTerminal ::
-  ( Row.Cons i0 Unit currentSet' currentSet
-  , Row.Cons i1 Unit currentSet'' currentSet'
-  , Symbol.Cons "_" currentId futureId
-  ) =>
-  Connect (i0 /\ False /\ False)
-    (i1 /\ True /\ False)
-    (currentId /\ currentSet /\ currentRef)
-    (futureId /\ currentSet'' /\ currentRef)
-    (currentId /\ True /\ False) where
-  connect _ _ = UnsafeGraphBuilder
-
-basic = evalGraphBuilder Ix.do
-  speaker <- createSpeaker
-  gain <- createGain
-  sinOsc <- createSinOsc
-  _0 <- connect sinOsc gain
-  _1 <- connect _0 speaker
-  Ix.pure unit
-
-selfConnect = evalGraphBuilder Ix.do
-  speaker <- createSpeaker
-  gain <- createGain
-  _0 <- connect gain gain
-  _1 <- connect _0 speaker
-  Ix.pure unit
-
-main :: Effect Unit
-main = log "🍝"
+  Connect (n /\ c /\ t /\ s) fId fNode iId iNode (n /\ c' /\ t'' /\ s') where
+  connect _ = UnsafeGraphBuilder
